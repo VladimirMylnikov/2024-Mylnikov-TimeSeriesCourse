@@ -8,7 +8,7 @@ from plotly.offline import init_notebook_mode
 import plotly.graph_objs as go
 import plotly.express as px
 plotly.offline.init_notebook_mode(connected=True)
-
+import matplotlib.pyplot as plt
 
 def plot_ts_set(ts_set: np.ndarray, title: str = 'Input Time Series Set') -> None:
     """
@@ -51,10 +51,10 @@ def plot_ts_set(ts_set: np.ndarray, title: str = 'Input Time Series Set') -> Non
                       legend=dict(font=dict(size=20, color='black'))
                       )
 
-    fig.show(renderer="colab")
+    fig.show(renderer="browser")
 
 
-def mplot2d(x: np.ndarrray, y: np.ndarrray, plot_title: str = None, x_title: str = None, y_title: str = None, trace_titles: np.ndarray = None) -> None:
+def mplot2d(x: np.ndarray, y: np.ndarray, plot_title: str = None, x_title: str = None, y_title: str = None, trace_titles: np.ndarray = None) -> None:
     """
     Multiple 2D Plots on figure for different experiments
 
@@ -100,10 +100,10 @@ def mplot2d(x: np.ndarrray, y: np.ndarrray, plot_title: str = None, x_title: str
                       height=600
                       )
 
-    fig.show(renderer="colab")
+    fig.show(renderer="browser")
 
 
-def plot_bestmatch_data(ts: np.ndarrray, query: np.ndarray) -> None:
+def plot_bestmatch_data(ts: np.ndarray, query: np.ndarray) -> None:
     """
     Visualize the input data (time series and query) for the best match task
 
@@ -146,10 +146,9 @@ def plot_bestmatch_data(ts: np.ndarrray, query: np.ndarray) -> None:
                       showlegend=False,
                       title_x=0.5)
 
-    fig.show(renderer="colab")
+    fig.show(renderer="browser")
 
-
-def plot_bestmatch_results(ts: np.ndarrray, query: np.ndarrray, bestmatch_results: dict) -> None:
+def plot_bestmatch_results(ts: np.ndarray, query: np.ndarray, bestmatch_results: dict) -> None:
     """
     Visualize the best match results
 
@@ -160,10 +159,25 @@ def plot_bestmatch_results(ts: np.ndarrray, query: np.ndarrray, bestmatch_result
     bestmatch_results: output data found by the best match algorithm
     """
 
-    # INSERT YOUR CODE
+    fig, ax = plt.subplots(figsize=(15, 7))
+    
+    ax.plot(ts, label='Time Series')
+    
+    query_indices = np.arange(bestmatch_results['indices'][0], bestmatch_results['indices'][0] + len(query))
+    ax.plot(query_indices, ts[query_indices], label='Query', color='red')
+    
+    for idx in bestmatch_results['indices']:
+        subseq_indices = np.arange(idx, idx + len(query))
+        ax.plot(subseq_indices, ts[subseq_indices], label=f'Match {bestmatch_results["indices"].index(idx)}', color='purple')
+    
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Amplitude')
+    ax.legend()
+    plt.show()
 
 
-def pie_chart(labels: np.ndarrray, values: np.ndarrray, plot_title='Pie chart') -> None:
+
+def pie_chart(labels: np.ndarray, values: np.ndarray, plot_title='Pie chart') -> None:
     """
     Build the pie chart
 
@@ -183,4 +197,4 @@ def pie_chart(labels: np.ndarrray, values: np.ndarrray, plot_title='Pie chart') 
                       height=500
                       )
 
-    fig.show(renderer="colab")
+    fig.show(renderer="browser")
