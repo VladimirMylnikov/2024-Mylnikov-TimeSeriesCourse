@@ -5,6 +5,9 @@ import copy
 from modules.utils import sliding_window, z_normalize
 from modules.metrics import DTW_distance
 
+from scipy.spatial.distance import euclidean
+from fastdtw import fastdtw
+from dtaidistance import dtw
 
 def apply_exclusion_zone(array: np.ndarray, idx: int, excl_zone: int) -> np.ndarray:
     """
@@ -89,7 +92,6 @@ class BestMatchFinder:
         self.is_normalize: bool = is_normalize
         self.r: float = r
 
-
     def _calculate_excl_zone(self, m: int) -> int:
         """
         Calculate the exclusion zone
@@ -102,15 +104,68 @@ class BestMatchFinder:
         -------
         excl_zone: exclusion zone
         """
-
-        excl_zone = math.ceil(m * self.excl_zone_frac)
-
-        return excl_zone
-
+        return math.ceil(m * self.excl_zone_frac)
 
     def perform(self):
-
         raise NotImplementedError
+
+
+class BestMatchPredictor(BestMatchFinder):
+    def __init__(self, excl_zone_frac: float = 1, topK: int = 3, is_normalize: bool = True, r: float = 0.05, aggr_func: str = 'average') -> None:
+        super().__init__(excl_zone_frac, topK, is_normalize, r)
+        self.aggr_func = aggr_func
+
+    def _z_normalize(self, subsequence):
+        return (subsequence - np.mean(subsequence)) / np.std(subsequence)
+
+
+
+    def _calculate_distance(self, Q, subsequence):
+        if self.is_normalize:
+            Q = self._z_normalize(Q)
+            subsequence = self._z_normalize(subsequence)
+
+        # Ensure both are 1-D arrays
+        Q = np.ravel(Q)
+        subsequence = np.ravel(subsequence)
+
+        # Use dtaidistance instead of fastdtw
+        distance = dtw.distance(Q, subsequence)
+        return distance
+
+    def perform(self, T_train, Q, h):
+        excl_zone = self._calculate_excl_zone(len(Q))
+        distances = []
+
+        for i in range(len(T_train) - len(Q) + 1):
+            if i < excl_zone:
+                continue
+            subsequence = T_train[i:i+len(Q)]
+            distance = self._calculate_distance(Q, subsequence)
+            distances.append((distance, i))
+
+        distances.sort(key=lambda x: x[0])
+        topK_indices = [idx for _, idx in distances[:self.topK]]
+
+        predictions = []
+        for idx in topK_indices:
+            future_values = T_train[idx+len(Q):idx+len(Q)+h]
+            # Only include future values if they match the length of h
+            if len(future_values) == h:
+                predictions.append(future_values)
+
+        if len(predictions) == 0:
+            raise ValueError("No valid predictions found. Ensure enough future data exists for the forecast horizon.")
+
+        predictions = np.array(predictions)
+        
+        if self.aggr_func == 'average':
+            return np.mean(predictions, axis=0)
+        elif self.aggr_func == 'median':
+            return np.median(predictions, axis=0)
+        else:
+            raise ValueError("Unsupported aggregation function")
+
 
 
 class NaiveBestMatchFinder(BestMatchFinder):
@@ -150,11 +205,29 @@ class NaiveBestMatchFinder(BestMatchFinder):
         bsf = np.inf
 
         bestmatch = {
-            'index' : [],
+            'indices' : [],
             'distance' : []
         }
         
-        # INSERT YOUR CODE
+        # Normalize query if needed
+        if self.is_normalize:
+            query = z_normalize(query)
+
+        # Compute distance profile for each subsequence
+        for i in range(N):
+            subsequence = ts_data[i]
+            if self.is_normalize:
+                subsequence = z_normalize(subsequence)
+            distance = DTW_distance(subsequence, query, r=self.r)
+            dist_profile[i] = distance
+
+        # Find topK matches
+        topK_results = topK_match(dist_profile, excl_zone, self.topK, max_distance=bsf)
+
+        bestmatch['indices'] = topK_results['indices']
+        bestmatch['distance'] = topK_results['distances']
+
+
 
         return bestmatch
 
@@ -197,11 +270,8 @@ class UCR_DTW(BestMatchFinder):
         lb_Kim: LB_Kim lower bound
         """
 
-        lb_Kim = 0
-        
-        # INSERT YOUR CODE
+        return (subs1[0] - subs2[0])**2 + (subs1[-1] - subs2[-1])**2
 
-        return lb_Kim
 
 
     def _LB_Keogh(self, subs1: np.ndarray, subs2: np.ndarray, r: float) -> float:
@@ -219,10 +289,23 @@ class UCR_DTW(BestMatchFinder):
         lb_Keogh: LB_Keogh lower bound
         """
 
+        n = len(subs1)
         lb_Keogh = 0
-
-        # INSERT YOUR CODE
-
+        
+        # Calculate upper and lower envelopes for subs1
+        U = np.zeros(n)
+        L = np.zeros(n)
+        for i in range(n):
+            U[i] = np.max(subs1[max(0, i-r):min(n, i+r+1)])
+            L[i] = np.min(subs1[max(0, i-r):min(n, i+r+1)])
+        
+        # Calculate LB_Keogh
+        for i in range(n):
+            if subs2[i] > U[i]:
+                lb_Keogh += (subs2[i] - U[i])**2
+            elif subs2[i] < L[i]:
+                lb_Keogh += (subs2[i] - L[i])**2
+        
         return lb_Keogh
 
 
@@ -271,10 +354,45 @@ class UCR_DTW(BestMatchFinder):
         bsf = np.inf
         
         bestmatch = {
-            'index' : [],
+            'indices' : [],
             'distance' : []
         }
 
-        # INSERT YOUR CODE
-
+        for i in range(N):
+            if i < excl_zone:
+                continue
+            
+            subs = ts_data[i]
+            
+            # Step 1: LB_KimFL
+            lb_Kim = self._LB_Kim(query, subs)
+            self.lb_Kim_num += 1
+            if lb_Kim > bsf:
+                continue
+            
+            # Step 2: LB_KeoghQC
+            lb_KeoghQC = self._LB_Keogh(query, subs, int(self.r * m))
+            self.lb_KeoghQC_num += 1
+            if lb_KeoghQC > bsf:
+                continue
+            
+            # Step 3: LB_KeoghCQ
+            lb_KeoghCQ = self._LB_Keogh(subs, query, int(self.r * m))
+            self.lb_KeoghCQ_num += 1
+            if lb_KeoghCQ > bsf:
+                continue
+            
+            # Step 4: DTW
+            dtw_dist = DTW_distance(query, subs, self.r)
+            self.not_pruned_num += 1
+            
+            if dtw_dist < bsf:
+                bsf = dtw_dist
+                bestmatch['indices'].append(i)
+                bestmatch['distance'].append(dtw_dist)
+        
+        # Sort results by distance
+        bestmatch['indices'] = [x for _, x in sorted(zip(bestmatch['distance'], bestmatch['indices']))]
+        bestmatch['distance'] = sorted(bestmatch['distance'])
+        
         return bestmatch
