@@ -26,7 +26,7 @@ def compute_mp(ts1: np.ndarray, m: int, exclusion_zone: int = None, ts2: np.ndar
     
     if ts2 is None:
         # Cчитаем матричный профиль для одного ряда 
-        mp = stumpy.stump(ts1, m)
+        mp = stumpy.stump(ts1, m, k=exclusion_zone)
     else:
         # # Cчитаем матричный профиль между двумя временными рядами 
         mp = stumpy.stump(ts1, m, ts2)
